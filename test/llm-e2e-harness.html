@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Meeting Copilot — E2E Ollama real</title></head>
+<body>
+<pre id="out">rodando…</pre>
+<script src="../llm.js"></script>
+<script>
+(async () => {
+  const results = [];
+  const check = (name, ok, detail) => results.push({ name, ok: Boolean(ok), detail: detail ?? null });
+
+  const { createClient } = window.MeetingLlm;
+  const client = createClient({
+    settings: { provider: "ollama", model: "qwen3:8b", ollamaUrl: "http://127.0.0.1:11434" }
+  });
+
+  try {
+    const models = await client.listModels();
+    check("listModels retorna modelos reais", models.length > 0, models.length);
+    check("modelo alvo está instalado", models.some(m => m.name === "qwen3:8b"));
+  } catch (error) {
+    check("listModels não lançou erro", false, String(error?.message || error));
+  }
+
+  try {
+    const tokens = [];
+    const full = await client.chat({
+      messages: [{ role: "user", content: "Responda só com a palavra: OK" }],
+      onToken: (t) => tokens.push(t)
+    });
+    check("chat streamou pelo menos 1 token via onToken", tokens.length > 0, tokens.length);
+    check("texto final não vazio", full.trim().length > 0, full.slice(0, 60));
+    check("texto final é concatenação dos tokens", tokens.join("") === full);
+  } catch (error) {
+    check("chat não lançou erro", false, String(error?.message || error));
+  }
+
+  window.__E2E_RESULT__ = { total: results.length, failed: results.filter(r => !r.ok).length, results };
+  document.getElementById("out").textContent = JSON.stringify(window.__E2E_RESULT__, null, 2);
+})();
+</script>
+</body>
+</html>

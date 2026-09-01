@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Copilot",
+  "version": "0.1.0",
+  "description": "Captura legendas do Teams e roda um copiloto de reunião com modelo local.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "scripting",
+    "tabs",
+    "offscreen",
+    "tabCapture"
+  ],
+  "host_permissions": [
+    "https://teams.microsoft.com/*",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*",
+    "http://localhost:9000/*",
+    "http://127.0.0.1:9000/*"
+  ],
+  "optional_host_permissions": [
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*"
+  ],
+  "action": {
+    "default_title": "Meeting Copilot"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["llm.js", "meeting-state.js", "background.js"]
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "sidebar_action": {
+    "default_panel": "sidepanel.html",
+    "default_title": "Meeting Copilot"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "meeting-copilot@filipegcb.local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://teams.microsoft.com/*"],
+      "js": ["transcript.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

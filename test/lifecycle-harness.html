@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Meeting Copilot — harness de lifecycle</title></head>
+<body>
+<h1>Harness de lifecycle (reinjeção e invalidação)</h1>
+<div id="captions-root"></div>
+<pre id="out">rodando…</pre>
+<script>
+// chrome falso: só o suficiente para o content script rodar fora da extensão.
+const sent = [];
+const changeListeners = [];
+window.chrome = {
+  runtime: {
+    id: "fake-extension-id",
+    sendMessage(message) {
+      sent.push(message);
+      if (message.type === "meetingCopilot:getMeetingSession") {
+        return Promise.resolve({ ok: true, meetingId: "session-harness" });
+      }
+      return Promise.resolve({ ok: true });
+    }
+  },
+  storage: {
+    local: {
+      get(key) {
+        if (key === "meetingTranscript") return Promise.resolve({ meetingTranscript: [] });
+        return Promise.resolve({ meetingCopilotDebug: false });
+      }
+    },
+    onChanged: {
+      addListener(listener) { changeListeners.push(listener); },
+      removeListener(listener) {
+        const index = changeListeners.indexOf(listener);
+        if (index >= 0) changeListeners.splice(index, 1);
+      }
+    }
+  }
+};
+window.__sent = sent;
+window.__changeListeners = changeListeners;
+const warnings = [];
+const originalWarn = console.warn.bind(console);
+console.warn = (...args) => { warnings.push(args.map(String).join(" ")); originalWarn(...args); };
+window.__warnings = warnings;
+</script>
+<script src="../transcript.js"></script>
+<script src="../content.js"></script>
+<script>
+const results = [];
+const root = document.getElementById("captions-root");
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function check(name, condition, detail) {
+  results.push({ name, ok: Boolean(condition), detail: detail ?? null });
+}
+
+function appendCaption(author, text) {
+  root.innerHTML = "";
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML =
+    `<span data-tid="author">${author}</span>` +
+    `<span data-tid="closed-caption-text">${text}</span>`;
+  root.appendChild(wrapper);
+}
+
+function appends() {
+  return window.__sent.filter((m) => m.type === "meetingCopilot:appendTranscript");
+}
+
+function loadContentAgain() {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "../content.js?reinject=" + Date.now();
+    script.onload = resolve;
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+}
+
+(async () => {
+  await wait(200);
+  check("instância viva após bootstrap", window.__MEETING_COPILOT_PROBE__?.() === true);
+  check("teardown registrado", typeof window.__MEETING_COPILOT_TEARDOWN__ === "function");
+
+  appendCaption("João Silva", "Primeira fala capturada");
+  await wait(2200);
+  check("fala persistida antes da reinjeção", appends().length === 1, appends().length);
+  check("speaker correto", appends()[0]?.item.speaker === "João Silva", appends()[0]?.item.speaker);
+
+  // Reinjeção: simula o sweep do service worker após reload da extensão.
+  const listenersBefore = window.__changeListeners.length;
+  await loadContentAgain();
+  await wait(300);
+  check("listener de storage não acumula",
+    window.__changeListeners.length === listenersBefore,
+    `${listenersBefore} -> ${window.__changeListeners.length}`);
+  check("instância nova viva", window.__MEETING_COPILOT_PROBE__?.() === true);
+
+  // Se o observer antigo tivesse sobrevivido, a mesma caption viraria 2 falas.
+  appendCaption("Maria Souza", "Fala depois da reinjeção");
+  await wait(2200);
+  const afterReinject = appends().filter((m) => m.item.speaker === "Maria Souza");
+  check("apenas um observer capturando", afterReinject.length === 1, afterReinject.length);
+
+  // Invalidação: o contexto morre e o heartbeat precisa derrubar a instância.
+  const sentBefore = window.__sent.length;
+  delete window.chrome.runtime.id;
+  await wait(6000);
+  check("probe reporta instância morta", window.__MEETING_COPILOT_PROBE__ == null ||
+    window.__MEETING_COPILOT_PROBE__() === false);
+  check("__MEETING_COPILOT_ALIVE__ falso", window.__MEETING_COPILOT_ALIVE__ === false);
+  check("apenas um aviso de invalidação",
+    window.__warnings.filter((w) => /Contexto da extensão invalidado/.test(w)).length === 1,
+    window.__warnings.length);
+
+  appendCaption("Zumbi", "Não deveria ser capturada");
+  await wait(2500);
+  check("zumbi não envia mensagem", window.__sent.length === sentBefore,
+    `${sentBefore} -> ${window.__sent.length}`);
+  check("nenhum retry em loop",
+    window.__warnings.filter((w) => /Contexto da extensão invalidado/.test(w)).length === 1);
+
+  window.__LIFECYCLE_RESULT__ = {
+    total: results.length,
+    failed: results.filter(({ ok }) => !ok).length,
+    results,
+    warnings: window.__warnings
+  };
+  document.getElementById("out").textContent =
+    JSON.stringify(window.__LIFECYCLE_RESULT__, null, 2);
+})();
+</script>
+</body>
+</html>

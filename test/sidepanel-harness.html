@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Meeting Copilot — harness do side panel</title></head>
+<body>
+<div id="status">● Monitorando Teams</div>
+<div id="summary"></div>
+<div id="transcript"></div>
+<button id="newMeeting">Nova reunião</button>
+<button id="clear">Limpar</button>
+<pre id="out">rodando…</pre>
+<script>
+// chrome falso com o mesmo contrato do service worker.
+const changeListeners = [];
+const store = { meetingTranscript: [] };
+window.chrome = {
+  storage: {
+    local: {
+      get(query) {
+        const result = { ...query };
+        for (const key of Object.keys(query)) {
+          if (Object.hasOwn(store, key)) result[key] = store[key];
+        }
+        return Promise.resolve(result);
+      }
+    },
+    onChanged: { addListener(listener) { changeListeners.push(listener); } }
+  },
+  runtime: { id: "fake", sendMessage: () => Promise.resolve({ ok: true }) }
+};
+window.__pushTranscript = (items) => {
+  const oldValue = store.meetingTranscript;
+  store.meetingTranscript = items;
+  for (const listener of changeListeners) {
+    listener({ meetingTranscript: { oldValue, newValue: items } }, "local");
+  }
+};
+</script>
+<script src="../sidepanel.js"></script>
+<script>
+const results = [];
+// Sem setTimeout: em aba oculta o Chrome congela timers. O chrome falso
+// resolve as promises na hora, então microtasks bastam.
+const settle = async () => { for (let i = 0; i < 20; i += 1) await Promise.resolve(); };
+const check = (name, ok, detail) => results.push({ name, ok: Boolean(ok), detail: detail ?? null });
+const transcriptText = () => document.getElementById("transcript").textContent;
+
+window.__runChecks = async () => {
+  results.length = 0;
+  await settle();
+  check("estado vazio renderizado", transcriptText().includes("Aguardando"), transcriptText().trim().slice(0, 40));
+
+  window.__pushTranscript([
+    { id: "s1", time: "2026-09-01T12:00:01.500Z", speaker: "João Silva", text: "Precisamos rever essa estratégia" },
+    { id: "s2", time: "2026-09-01T12:00:04.000Z", speaker: "Maria Souza", text: "Concordo com isso" }
+  ]);
+  await settle();
+
+  check("fala 1 visível", transcriptText().includes("Precisamos rever essa estratégia"));
+  check("speaker 1 visível", transcriptText().includes("João Silva"));
+  check("fala 2 visível", transcriptText().includes("Concordo com isso"));
+  check("speaker 2 visível", transcriptText().includes("Maria Souza"));
+  check("horário formatado", /\d{2}:\d{2}:\d{2}/.test(transcriptText()));
+  check("contagem no resumo",
+    document.getElementById("summary").textContent.includes("2 falas"),
+    document.getElementById("summary").textContent.trim());
+
+  window.__pushTranscript([
+    ...store.meetingTranscript,
+    { id: "s3", time: "2026-09-01T12:00:07.000Z", speaker: "Ana Lima", text: "Fechado então" }
+  ]);
+  await settle();
+  check("atualização em tempo real", transcriptText().includes("Fechado então"));
+  check("resumo atualizado",
+    document.getElementById("summary").textContent.includes("3 falas"),
+    document.getElementById("summary").textContent.trim());
+
+  window.__SIDEPANEL_RESULT__ = { total: results.length, failed: results.filter(r => !r.ok).length, results };
+  document.getElementById("out").textContent = JSON.stringify(window.__SIDEPANEL_RESULT__, null, 2);
+  return window.__SIDEPANEL_RESULT__;
+};
+</script>
+</body>
+</html>

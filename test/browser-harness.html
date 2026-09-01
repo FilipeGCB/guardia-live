@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><title>Meeting Copilot — harness de DOM real</title></head>
+<body>
+<h1>Harness de DOM real</h1>
+<div id="captions-root"></div>
+<pre id="out">rodando…</pre>
+<script src="../transcript.js"></script>
+<script>
+const { SegmentAssembler, TeamsCaptionSource, CAPTION_SELECTORS } = window.MeetingTranscript;
+const root = document.getElementById("captions-root");
+const segments = [];
+const assembler = new SegmentAssembler();
+const results = [];
+
+function check(name, condition, detail) {
+  results.push({ name, ok: Boolean(condition), detail: detail ?? null });
+}
+
+const source = new TeamsCaptionSource({
+  root: document,
+  debounceMs: 120,
+  onObservation: (item) => segments.push(...assembler.observe(item)),
+  onFinalized: ({ id, finalizedAt }) => {
+    const done = assembler.finalize(id, finalizedAt);
+    if (done) segments.push(done);
+  }
+});
+
+function captionBlock({ author, text, captionTid, authorTid }) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML =
+    `<span data-tid="${authorTid}">${author}</span>` +
+    `<span data-tid="${captionTid}">${text}</span>`;
+  return wrapper;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+(async () => {
+  source.start();
+
+  // 1. caption padrão do Teams, parcial -> final
+  const block = captionBlock({
+    author: "João Silva",
+    text: "Precisamos",
+    captionTid: "closed-caption-text",
+    authorTid: "author"
+  });
+  root.appendChild(block);
+  await wait(40);
+
+  const captionEl = block.querySelector('[data-tid="closed-caption-text"]');
+  captionEl.textContent = "Precisamos rever";
+  await wait(40);
+  captionEl.textContent = "Precisamos rever essa estratégia";
+  await wait(300);
+
+  check("seletor resolvido", source.captionSelector === CAPTION_SELECTORS[0], source.captionSelector);
+  check("um segmento finalizado", segments.length === 1, segments.length);
+  check("speaker capturado", segments[0]?.speaker === "João Silva", segments[0]?.speaker);
+  check("texto final sem duplicação", segments[0]?.text === "Precisamos rever essa estratégia", segments[0]?.text);
+
+  // 2. troca rápida de speaker: novo bloco enquanto o anterior some
+  root.innerHTML = "";
+  const second = captionBlock({
+    author: "Maria Souza",
+    text: "Concordo com isso",
+    captionTid: "closed-caption-text",
+    authorTid: "author"
+  });
+  root.appendChild(second);
+  await wait(300);
+
+  check("segundo speaker", segments[1]?.speaker === "Maria Souza", segments[1]?.speaker);
+  check("segundo texto", segments[1]?.text === "Concordo com isso", segments[1]?.text);
+
+  // 3. DOM alternativo do Teams (fallback de seletor)
+  root.innerHTML = "";
+  const third = captionBlock({
+    author: "Ana Lima",
+    text: "Legenda em DOM alternativo",
+    captionTid: "closed-caption-message",
+    authorTid: "closed-caption-author"
+  });
+  root.appendChild(third);
+  await wait(300);
+
+  check("fallback de seletor de caption",
+    source.captionSelector === '[data-tid="closed-caption-message"]',
+    source.captionSelector);
+  check("fallback de speaker", segments[2]?.speaker === "Ana Lima", segments[2]?.speaker);
+  check("fallback de texto", segments[2]?.text === "Legenda em DOM alternativo", segments[2]?.text);
+
+  // 4. stop() derruba o observer de verdade
+  source.stop();
+  root.innerHTML = "";
+  root.appendChild(captionBlock({
+    author: "Zumbi",
+    text: "Não deveria aparecer",
+    captionTid: "closed-caption-text",
+    authorTid: "author"
+  }));
+  await wait(300);
+  check("stop() encerra a captura", segments.length === 3, segments.length);
+
+  const failed = results.filter(({ ok }) => !ok);
+  window.__HARNESS_RESULT__ = {
+    total: results.length,
+    failed: failed.length,
+    results,
+    segments
+  };
+  document.getElementById("out").textContent = JSON.stringify(window.__HARNESS_RESULT__, null, 2);
+})();
+</script>
+</body>
+</html>
