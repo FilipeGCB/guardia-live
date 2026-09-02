@@ -429,8 +429,9 @@ test("integração finaliza uma única fala no silêncio via onFinalized", () =>
   });
   const caption = new FakeCaption("Teste de uma frase", "João");
 
-  document.captions = [caption];
   source.start();
+  document.captions = [caption];
+  source.scan();
   clock.tick(1501);
 
   assert.equal(observations.length, 1);
@@ -438,6 +439,41 @@ test("integração finaliza uma única fala no silêncio via onFinalized", () =>
     finalized.map(({ speaker, text }) => ({ speaker, text })),
     [{ speaker: "João", text: "Teste de uma frase" }]
   );
+});
+
+test("observer não reprocessa caption finalizada que permanece no DOM", () => {
+  withFakeMutationObserver(() => {
+    const clock = new FakeClock();
+    const document = new FakeCaptionDocument();
+    const segments = [];
+    const { source } = connectCapture({ clock, document, segments });
+    const caption = new FakeCaption("Fala única", "João");
+
+    source.start();
+    document.captions = [caption];
+    FakeMutationObserver.instances[0].trigger(document.body, [
+      {
+        type: "childList",
+        target: document.body,
+        addedNodes: [caption],
+        removedNodes: []
+      }
+    ]);
+    clock.tick(1500);
+
+    FakeMutationObserver.instances[0].trigger(document.body, [
+      {
+        type: "childList",
+        target: document.body,
+        addedNodes: [],
+        removedNodes: []
+      }
+    ]);
+    clock.tick(1500);
+
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0].text, "Fala única");
+  });
 });
 
 test("identical repeated observations do not postpone finalization", () => {
@@ -930,25 +966,36 @@ test("camada DOM encontra caption com o seletor atual", () => {
   assert.equal(observations[0].text, "Legenda encontrada");
 });
 
-test("start captura caption que já existia antes da inicialização", () => {
+test("bootstrap trata caption existente como baseline e preserva partial -> final", () => {
   withFakeMutationObserver(() => {
     const clock = new FakeClock();
     const document = new FakeCaptionDocument();
     const observations = [];
-    const { TeamsCaptionSource } = getApi();
-    const source = new TeamsCaptionSource({
-      root: document,
-      onObservation: (item) => observations.push(item),
-      now: clock.now,
-      setTimeout: clock.setTimeout,
-      clearTimeout: clock.clearTimeout
-    });
+    const segments = [];
+    const { source, assembler } = connectCapture({ clock, document, segments });
+    const caption = new FakeCaption("Já estava visível", "Maria");
 
-    document.captions = [new FakeCaption("Já estava visível", "Maria")];
+    document.captions = [caption];
+    source.onObservation = (item) => {
+      observations.push(item);
+      segments.push(...assembler.observe(item));
+    };
     source.start();
 
+    assert.equal(observations.length, 0);
+
+    caption.innerText = "Já estava visível agora";
+    caption.textContent = "Já estava visível agora";
+    FakeMutationObserver.instances[0].trigger(document.body, [
+      { type: "characterData", target: caption }
+    ]);
+    clock.tick(1500);
+
     assert.equal(observations.length, 1);
-    assert.equal(observations[0].text, "Já estava visível");
+    assert.deepEqual(
+      segments.map(({ speaker, text }) => ({ speaker, text })),
+      [{ speaker: "Maria", text: "Já estava visível agora" }]
+    );
   });
 });
 
@@ -1182,13 +1229,13 @@ test("adaptador resolve seletor alternativo de caption do Teams", () => {
     const segments = [];
     const { source } = connectCapture({ clock, document, segments });
 
+    source.start();
     document.captions = [
       new FakeCaption("Fala em DOM novo", "João", {
         dataTid: "closed-caption-message"
       })
     ];
-
-    source.start();
+    FakeMutationObserver.instances[0].trigger(document.body);
     clock.tick(1500);
 
     assert.equal(source.captionSelector, '[data-tid="closed-caption-message"]');
@@ -1205,13 +1252,13 @@ test("adaptador resolve seletor alternativo de autor", () => {
     const segments = [];
     const { source } = connectCapture({ clock, document, segments });
 
+    source.start();
     document.captions = [
       new FakeCaption("Fala com autor alternativo", "Maria", {
         authorSelector: '[data-tid="closed-caption-author"]'
       })
     ];
-
-    source.start();
+    FakeMutationObserver.instances[0].trigger(document.body);
     clock.tick(1500);
 
     assert.equal(segments.length, 1);
@@ -1226,8 +1273,9 @@ test("seletor que deixa de casar é reresolvido sem perder captura", () => {
     const segments = [];
     const { source } = connectCapture({ clock, document, segments });
 
-    document.captions = [new FakeCaption("Primeira fala", "João")];
     source.start();
+    document.captions = [new FakeCaption("Primeira fala", "João")];
+    FakeMutationObserver.instances[0].trigger(document.body);
     clock.tick(1500);
     assert.equal(source.captionSelector, '[data-tid="closed-caption-text"]');
 

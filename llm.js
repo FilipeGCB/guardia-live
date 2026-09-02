@@ -186,6 +186,73 @@
     "Ollama não respondeu. Confirme que está rodando (`ollama serve`) e que " +
     "aceita a extensão: OLLAMA_ORIGINS=\"chrome-extension://*\" ollama serve";
 
+  function extensionContext() {
+    let runtimeId = "";
+    let origin = "";
+
+    try {
+      runtimeId = String(
+        globalThis.chrome?.runtime?.id || globalThis.browser?.runtime?.id || ""
+      );
+    } catch (error) {
+      // Contexto da extensão pode já estar sendo invalidado.
+    }
+
+    try {
+      origin = String(globalThis.location?.origin || "");
+    } catch (error) {
+      // Alguns contextos de worker não expõem location.
+    }
+
+    if (origin === "null") origin = "";
+    if (!origin && runtimeId) origin = `chrome-extension://${runtimeId}`;
+
+    return { runtimeId, origin };
+  }
+
+  function extensionContextHint() {
+    const { runtimeId, origin } = extensionContext();
+    const details = [
+      runtimeId ? `chrome.runtime.id=${runtimeId}` : "chrome.runtime.id indisponível",
+      origin ? `origin=${origin}` : "origin indisponível"
+    ];
+    return details.join(", ");
+  }
+
+  const OLLAMA_ORIGIN_HINT =
+    "Ollama recusou a origem da extensão. No Linux, configure " +
+    "OLLAMA_ORIGINS=\"chrome-extension://*\" de forma persistente e reinicie o Ollama.";
+
+  function ollamaOriginHint() {
+    return `${OLLAMA_ORIGIN_HINT} Diagnóstico: ${extensionContextHint()}.`;
+  }
+
+  function responseDetail(detail) {
+    const text = String(detail ?? "").trim();
+    return text ? ` ${text.slice(0, 200)}` : "";
+  }
+
+  async function describeOllamaResponse(response, operation) {
+    const detail = await response.text().catch(() => "");
+    const status = Number(response.status);
+    const statusLabel = Number.isFinite(status) ? status : String(response.status);
+
+    if (status === 403) {
+      return new LlmError(
+        `Ollama recusou a origem/permissão (HTTP 403) ${operation}.${responseDetail(detail)}`,
+        { kind: "origem", hint: ollamaOriginHint() }
+      );
+    }
+
+    return new LlmError(
+      `Ollama respondeu HTTP ${statusLabel} ${operation}.${responseDetail(detail)}`,
+      {
+        kind: "http",
+        hint: `O servidor Ollama respondeu, mas não aceitou a requisição. Diagnóstico: ${extensionContextHint()}.`
+      }
+    );
+  }
+
   function describeFetchFailure(error, settings) {
     if (error?.name === "AbortError") {
       return new LlmError("Geração cancelada.", { kind: "cancelado" });
@@ -214,10 +281,7 @@
       }
 
       if (!response.ok) {
-        throw new LlmError(
-          `Ollama respondeu ${response.status} ao listar modelos.`,
-          { kind: "offline", hint: OLLAMA_OFFLINE_HINT }
-        );
+        throw await describeOllamaResponse(response, "ao listar modelos");
       }
 
       const payload = await response.json();
@@ -329,12 +393,14 @@
       }
 
       if (!response.ok) {
+        if (settings.provider === "ollama") {
+          throw await describeOllamaResponse(response, "ao gerar resposta");
+        }
+
         const detail = await response.text().catch(() => "");
         throw new LlmError(
           `${settings.provider} respondeu ${response.status}. ${detail.slice(0, 200)}`,
-          settings.provider === "ollama"
-            ? { kind: "offline", hint: OLLAMA_OFFLINE_HINT }
-            : {}
+          {}
         );
       }
 

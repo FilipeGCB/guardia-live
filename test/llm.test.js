@@ -144,6 +144,40 @@ test("createClient.chat traduz falha de rede em LlmError offline com dica", asyn
   );
 });
 
+test("createClient.chat classifica 403 como erro de origem com diagnóstico da extensão", async () => {
+  const previousChrome = globalThis.chrome;
+  const previousLocation = globalThis.location;
+  globalThis.chrome = { runtime: { id: "guard-ia-test-id" } };
+  globalThis.location = { origin: "chrome-extension://guard-ia-test-id" };
+
+  try {
+    const client = createClient({
+      settings: { provider: "ollama", model: "qwen3.8:27b" },
+      fetch: async () => ({
+        ok: false,
+        status: 403,
+        text: async () => "origin not allowed"
+      })
+    });
+
+    await assert.rejects(
+      () => client.chat({ messages: [{ role: "user", content: "oi" }] }),
+      (error) =>
+        error instanceof LlmError &&
+        error.kind === "origem" &&
+        /403/.test(error.message) &&
+        /guard-ia-test-id/.test(error.hint) &&
+        /chrome-extension:\/\/guard-ia-test-id/.test(error.hint) &&
+        /OLLAMA_ORIGINS="chrome-extension:\/\/\*"/.test(error.hint)
+    );
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+    if (previousLocation === undefined) delete globalThis.location;
+    else globalThis.location = previousLocation;
+  }
+});
+
 test("createClient.listModels mapeia a resposta do /api/tags", async () => {
   const client = createClient({
     settings: { provider: "ollama" },

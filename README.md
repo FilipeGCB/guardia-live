@@ -34,6 +34,31 @@ está implementada.
 OLLAMA_ORIGINS="chrome-extension://*" ollama serve
 ```
 
+Esse comando vale apenas para o processo iniciado no terminal. Para manter a
+origem autorizada em instalações Linux gerenciadas pelo `systemd`:
+
+```bash
+sudo systemctl edit ollama
+```
+
+Adicione ao override:
+
+```ini
+[Service]
+Environment="OLLAMA_ORIGINS=chrome-extension://*"
+```
+
+Depois recarregue e reinicie o serviço:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+systemctl show ollama --property=Environment
+```
+
+O valor `chrome-extension://*` autoriza extensões Chrome, incluindo a origem
+da extensão exibida no diagnóstico de erro 403.
+
 O servidor Whisper é opcional e usa o contrato
 `POST /v1/audio/transcriptions`.
 

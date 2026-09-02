@@ -82,6 +82,25 @@
     return element?.getAttribute?.(name) ?? null;
   }
 
+  function nodeContains(container, node) {
+    if (!container || !node) return false;
+    if (container === node) return true;
+
+    try {
+      if (container.contains?.(node)) return true;
+    } catch (error) {
+      // Fallback para os fakes e para nós de DOM que não expõem contains.
+    }
+
+    let current = node.parentElement;
+    while (current) {
+      if (current === container) return true;
+      current = current.parentElement;
+    }
+
+    return false;
+  }
+
   function truncateDiagnosticText(value) {
     const text = normalizeText(value);
     if (text.length <= MAX_DIAGNOSTIC_TEXT_LENGTH) return text;
@@ -249,6 +268,7 @@
       this.onCaptionsRecovered = onCaptionsRecovered;
       this.states = new Map();
       this.elementStates = new WeakMap();
+      this.elementSnapshots = new WeakMap();
       this.mutationObserver = null;
       this.scanSequence = 0;
       this.captionSelector = null;
@@ -315,7 +335,8 @@
             records: records.length
           });
           this.scan({
-            mutationDiagnostic: describeMutationCandidates(records)
+            mutationDiagnostic: describeMutationCandidates(records),
+            mutationRecords: records
           });
         });
         this.mutationObserver.observe(observationRoot, {
@@ -334,7 +355,10 @@
         });
       }
 
-      this.scan();
+      // Tudo que já estava na página é apenas o baseline. A próxima mutation
+      // que alterar uma caption cria/continua o lifecycle a partir do texto
+      // observado, sem reemitir o histórico que o bootstrap encontrou.
+      this.scan({ bootstrap: true });
     }
 
     stop() {
@@ -348,7 +372,11 @@
       this.states.clear();
     }
 
-    scan({ mutationDiagnostic = null } = {}) {
+    scan({
+      mutationDiagnostic = null,
+      mutationRecords = undefined,
+      bootstrap = false
+    } = {}) {
       const scanId = ++this.scanSequence;
       captureDiagnosticLog("scan iniciado", {
         scanId,
@@ -385,12 +413,15 @@
         this.onCaptionsRecovered();
       }
 
+      const candidates = bootstrap
+        ? captions
+        : this.selectMutationCaptions(captions, mutationRecords);
       const seen = new Set(captions);
       const claimedStates = new Set();
       const currentTime = this.now();
       const observedAt = timestamp(currentTime, currentTime);
 
-      for (const caption of captions) {
+      for (const caption of candidates) {
         const text = readCaptionText(caption);
         const speaker = readSpeaker(caption);
         const candidateDetails = {
@@ -410,6 +441,17 @@
           continue;
         }
 
+        if (bootstrap) {
+          this.elementSnapshots.set(caption, { text, speaker });
+          captureDiagnosticLog("candidato", {
+            ...candidateDetails,
+            discarded: true,
+            reason: "baseline do bootstrap",
+            decision: "baseline"
+          });
+          continue;
+        }
+
         let state = this.elementStates.get(caption);
 
         if (state && this.states.get(state.id) !== state) {
@@ -424,6 +466,21 @@
         ) {
           this.finalizeState(state, observedAt);
           state = null;
+        }
+
+        const previousSnapshot = this.elementSnapshots.get(caption);
+        if (
+          !state &&
+          previousSnapshot?.text === text &&
+          previousSnapshot?.speaker === speaker
+        ) {
+          captureDiagnosticLog("candidato", {
+            ...candidateDetails,
+            discarded: true,
+            reason: "caption já observada sem alteração",
+            decision: "duplicate"
+          });
+          continue;
         }
 
         if (!state) {
@@ -469,6 +526,10 @@
             generation: state.generation,
             recreated: false
           });
+          this.elementSnapshots.set(caption, {
+            text: state.text,
+            speaker: state.speaker
+          });
           this.emitObservation(state, observedAt);
           continue;
         }
@@ -509,9 +570,54 @@
         if (meaningfulChange) {
           state.text = text;
           if (isKnownSpeaker(speaker)) state.speaker = speaker;
+          this.elementSnapshots.set(caption, {
+            text: state.text,
+            speaker: state.speaker
+          });
           this.emitObservation(state, observedAt);
+        } else {
+          this.elementSnapshots.set(caption, {
+            text: state.text,
+            speaker: state.speaker
+          });
         }
       }
+    }
+
+    selectMutationCaptions(captions, records) {
+      if (records === undefined) return captions;
+      if (!records.length) return [];
+
+      // Mantém compatibilidade com chamadas de teste/integração que só
+      // informam que o root mudou. O snapshot abaixo ainda impede reemissão.
+      if (records.some((record) => !record?.type)) return captions;
+
+      return captions.filter((caption) =>
+        records.some((record) => this.captionAffectedByMutation(caption, record))
+      );
+    }
+
+    captionAffectedByMutation(caption, record) {
+      const target = record?.target;
+      if (!target) return false;
+
+      if (
+        target === caption ||
+        nodeContains(caption, target) ||
+        (caption.parentElement &&
+          (target === caption.parentElement ||
+            nodeContains(caption.parentElement, target)))
+      ) {
+        return true;
+      }
+
+      if (record.type !== "childList" && record.type !== "characterData") {
+        return false;
+      }
+
+      return [...(record.addedNodes || [])].some((node) =>
+        nodeContains(node, caption) || nodeContains(caption, node)
+      );
     }
 
     logZeroMutationDiagnostic(scanId, diagnostic) {
