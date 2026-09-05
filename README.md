@@ -1,88 +1,91 @@
 # Guard.IA Live
 
-Copiloto de IA em tempo real para reuniões, conversas e mensageiros.
+**Copiloto local-first para acompanhar reuniões em tempo real, organizar contexto e apoiar a conversa enquanto ela acontece.**
 
-## Estado atual
+**EN:** A local-first AI copilot for following meetings in real time, organizing context, and supporting the conversation as it happens.
 
-Este repositório contém uma extensão WebExtension MV3. O fluxo implementado
-hoje captura legendas visíveis do Microsoft Teams Web, monta um transcript,
-mantém histórico local e oferece um copiloto no painel lateral.
+[English version](README.en.md)
 
-O nome técnico da extensão e parte da interface ainda é **Meeting Copilot**.
-Esta publicação nomeia o projeto como Guard.IA Live sem alterar a
-funcionalidade existente. A captura genérica de outros mensageiros ainda não
-está implementada.
+## Em 10 segundos
+
+Guard.IA Live é uma extensão de navegador que acompanha **captions visíveis de reuniões**, monta um transcript local, mantém contexto da sessão e oferece um copiloto no painel lateral.
+
+Hoje, o fluxo realmente implementado está concentrado no **Microsoft Teams Web**. O projeto não se apresenta como um capturador universal de qualquer mensageiro.
+
+## Por que existe
+
+Em reuniões longas, o problema não é só transcrever: é **não perder contexto** enquanto a conversa evolui.
+
+O projeto explora um copiloto que acompanha o que foi dito, mantém histórico local e permite consultar a sessão sem tornar um serviço de nuvem obrigatório por padrão.
 
 ## O que está implementado
 
-- Captura de captions do Teams com deduplicação, lifecycle e reinjeção após
-  recarga da extensão.
-- Transcript atual, histórico, sessões, Meeting State e insights persistidos
-  em `chrome.storage.local`.
-- Chat com streaming e atalhos no painel lateral.
-- Ollama local como provider padrão; Anthropic/OpenAI são opt-in.
-- Fallback opcional de áudio via Whisper no Chrome quando as captions falham.
-- Adaptação inicial para Firefox com `sidebar_action`; o fallback de áudio
-  não está disponível no Firefox.
+- captura de captions do Teams com deduplicação, lifecycle e reinjeção após recarga da extensão;
+- transcript atual, histórico, sessões, Meeting State e insights persistidos em `chrome.storage.local`;
+- chat com streaming e atalhos no painel lateral;
+- **Ollama local como provider padrão**;
+- Anthropic/OpenAI opcionais e somente após configuração explícita;
+- fallback opcional de áudio via Whisper no Chrome quando captions falham;
+- adaptação inicial para Firefox com `sidebar_action`.
 
-## Requisitos
+O nome técnico de parte da interface ainda é **Meeting Copilot**. A publicação usa Guard.IA Live como nome do projeto sem fingir que todo o legado de naming já foi migrado.
 
-- Node.js para executar os testes.
-- Ollama local em `http://localhost:11434` para o copiloto:
+## Estado atual
+
+**Protótipo funcional em evolução.** O baseline atual cobre Teams Web e armazenamento local, mas ainda há limites importantes:
+
+- a captura depende das captions e dos seletores atuais do DOM do Teams;
+- uma reunião real do Teams e o fluxo completo ao vivo ainda exigem validação manual;
+- o fallback de áudio não está disponível no Firefox;
+- a extensão não inclui build de servidor Whisper nem modelos de IA;
+- captura genérica de outros mensageiros ainda não está implementada.
+
+## Privacidade e dados locais
+
+- captions, transcript, histórico e configurações ficam no armazenamento local do navegador;
+- o provider padrão não envia dados para a internet;
+- providers externos só são usados após configuração explícita e solicitação da permissão correspondente;
+- o fallback de áudio fica desligado por padrão;
+- o botão **Apagar tudo agora** remove os dados da extensão no navegador.
+
+O repositório não contém transcripts reais, conversas privadas, dumps de armazenamento, logs, credenciais, tokens válidos ou chaves. Fixtures e placeholders são sintéticos.
+
+## Como testar
+
+### Requisitos
+
+- Node.js para executar os testes;
+- Ollama local em `http://localhost:11434` para o copiloto.
 
 ```bash
 OLLAMA_ORIGINS="chrome-extension://*" ollama serve
 ```
 
-O servidor Whisper é opcional e usa o contrato
-`POST /v1/audio/transcriptions`.
+O servidor Whisper é opcional e usa o contrato:
 
-## Carregar para testar
+```text
+POST /v1/audio/transcriptions
+```
 
 ### Chrome
 
 1. Abra `chrome://extensions` e ative o modo do desenvolvedor.
 2. Selecione **Carregar sem compactação** e escolha esta pasta.
-3. Abra o Teams Web, habilite as captions e abra o painel da extensão.
+3. Abra o Teams Web, habilite captions e abra o painel da extensão.
 
 ### Firefox
 
 1. Abra `about:debugging#/runtime/this-firefox`.
 2. Selecione **Carregar extensão temporária** e escolha `manifest.json`.
-3. Abra a sidebar pelo menu de Sidebars e selecione **Meeting Copilot**.
+3. Abra a sidebar e selecione **Meeting Copilot**.
 
-O manifesto atual contém chaves/permissões específicas do Chrome
-(`sidePanel`, `offscreen`, `tabCapture` e `side_panel`); o Firefox pode
-exibir avisos ao carregá-lo. Isso é uma limitação conhecida deste baseline.
+O manifesto atual contém permissões específicas do Chrome (`sidePanel`, `offscreen`, `tabCapture` e `side_panel`), então o Firefox pode exibir avisos.
 
-## Privacidade e dados locais
-
-- Captions, transcript, histórico e configurações ficam no armazenamento local
-  do navegador.
-- O provider padrão não envia dados para a internet.
-- Providers externos só são usados após configuração explícita e solicitação
-  da permissão correspondente.
-- O fallback de áudio fica desligado por padrão.
-- O botão **Apagar tudo agora** remove os dados da extensão no navegador.
-
-Não há transcripts, conversas reais, dumps de armazenamento, logs, credenciais,
-tokens válidos ou chaves neste repositório. Há apenas fixtures sintéticas e
-placeholders de teste. Artefatos locais desse tipo são ignorados por
-`.gitignore`.
-
-## Testes
+## Testes automatizados
 
 ```bash
 node --test
 for file in ./*.js; do node --check "$file" || exit 1; done
 ```
 
-Os harnesses em `test/*.html` exercitam a captura e o lifecycle contra DOM
-real do navegador quando servidos localmente.
-
-## Limitações conhecidas
-
-- A captura depende das captions e dos seletores atuais do DOM do Teams.
-- Uma reunião real do Teams e o fluxo completo ao vivo ainda exigem validação
-  manual.
-- A extensão não inclui build, servidor Whisper ou modelos de IA.
+Os harnesses em `test/*.html` exercitam captura e lifecycle contra DOM real do navegador quando servidos localmente.
